@@ -1,0 +1,734 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ASCII Renderer</title>
+  <style>
+    :root {
+      --bg: #0d0d0d;
+      --surface: #161616;
+      --surface2: #1e1e1e;
+      --border: #2a2a2a;
+      --text: #e2e2e2;
+      --muted: #555;
+      --accent: #3b82f6;
+      --accent-glow: rgba(59, 130, 246, 0.15);
+      --mono: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Menlo', 'Consolas', monospace;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: system-ui, -apple-system, sans-serif;
+      font-size: 14px;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    header {
+      display: flex;
+      align-items: baseline;
+      gap: 10px;
+      padding: 14px 20px;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    header h1 { font-size: 16px; font-weight: 600; letter-spacing: -0.3px; }
+    header span { color: var(--muted); font-size: 12px; }
+    .layout {
+      display: flex;
+      flex: 1;
+      overflow: hidden;
+      height: calc(100vh - 49px);
+    }
+    /* ── Sidebar ── */
+    .sidebar {
+      width: 260px;
+      flex-shrink: 0;
+      border-right: 1px solid var(--border);
+      overflow-y: auto;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+    }
+    .drop-zone {
+      border: 1.5px dashed var(--border);
+      border-radius: 8px;
+      padding: 20px 16px;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color 0.15s, background 0.15s;
+      background: var(--surface);
+      user-select: none;
+    }
+    .drop-zone:hover, .drop-zone.over {
+      border-color: var(--accent);
+      background: var(--accent-glow);
+    }
+    .drop-zone svg { display: block; margin: 0 auto 8px; color: var(--muted); }
+    .drop-zone .hint { font-size: 12px; color: var(--muted); line-height: 1.5; }
+    .drop-zone .filename { font-size: 11px; color: var(--accent); margin-top: 4px; font-family: var(--mono); }
+    .section { display: flex; flex-direction: column; gap: 10px; }
+    .section-title {
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      color: var(--muted);
+    }
+    .ctrl { display: flex; flex-direction: column; gap: 3px; }
+    .ctrl-row { display: flex; justify-content: space-between; align-items: center; }
+    .ctrl label { font-size: 13px; }
+    .ctrl .val { font-size: 11px; color: var(--muted); font-family: var(--mono); }
+    input[type=range] {
+      width: 100%;
+      accent-color: var(--accent);
+      cursor: pointer;
+    }
+    input[type=text] {
+      width: 100%;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 5px 8px;
+      color: var(--text);
+      font-size: 12px;
+      font-family: var(--mono);
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    input[type=text]:focus { border-color: var(--accent); }
+    .toggle-row { display: flex; justify-content: space-between; align-items: center; font-size: 13px; }
+    .switch { position: relative; width: 34px; height: 18px; cursor: pointer; }
+    .switch input { opacity: 0; width: 0; height: 0; }
+    .track {
+      position: absolute; inset: 0;
+      background: var(--border);
+      border-radius: 9px;
+      transition: background 0.15s;
+    }
+    .thumb {
+      position: absolute;
+      width: 12px; height: 12px;
+      background: white;
+      border-radius: 50%;
+      top: 3px; left: 3px;
+      transition: transform 0.15s;
+    }
+    .switch input:checked ~ .track { background: var(--accent); }
+    .switch input:checked ~ .thumb { transform: translateX(16px); }
+    .render-btn {
+      background: var(--accent);
+      color: white;
+      border: none;
+      border-radius: 6px;
+      padding: 9px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      width: 100%;
+      transition: opacity 0.15s;
+      letter-spacing: 0.2px;
+    }
+    .render-btn:hover:not(:disabled) { opacity: 0.85; }
+    .render-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+    /* ── Output ── */
+    .output-pane {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      min-width: 0;
+    }
+    .output-toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 16px;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+      gap: 10px;
+    }
+    .status { font-size: 12px; color: var(--muted); flex: 1; }
+    .status.err { color: #f87171; }
+    .meta { font-size: 11px; color: var(--muted); font-family: var(--mono); }
+    .copy-btn {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      color: var(--text);
+      border-radius: 4px;
+      padding: 4px 10px;
+      font-size: 11px;
+      cursor: pointer;
+      transition: background 0.15s;
+      white-space: nowrap;
+    }
+    .copy-btn:hover { background: var(--border); }
+    .output-scroll {
+      flex: 1;
+      overflow: auto;
+      padding: 16px;
+    }
+    #art {
+      font-family: var(--mono);
+      font-size: 8px;
+      line-height: 1.18;
+      white-space: pre;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 12px;
+      display: inline-block;
+      min-width: 100%;
+    }
+    #art.empty {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 200px;
+      color: var(--muted);
+      font-family: system-ui, sans-serif;
+      font-size: 13px;
+      min-width: unset;
+      width: 100%;
+    }
+    .progress-wrap {
+      padding: 0 16px;
+      flex-shrink: 0;
+    }
+    .progress {
+      height: 2px;
+      background: var(--border);
+      border-radius: 1px;
+      overflow: hidden;
+      margin-bottom: 8px;
+    }
+    .progress-bar {
+      height: 100%;
+      background: var(--accent);
+      border-radius: 1px;
+      transition: width 0.08s linear;
+      width: 0%;
+    }
+  </style>
+</head>
+<body>
+<header>
+  <h1>ASCII Renderer</h1>
+  <span>shape-based character matching</span>
+</header>
+<div class="layout">
+  <aside class="sidebar">
+    <!-- File drop zone -->
+    <div class="drop-zone" id="dropZone">
+      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <path d="M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/>
+        <polyline points="16 8 12 4 8 8"/>
+        <line x1="12" y1="4" x2="12" y2="16"/>
+      </svg>
+      <p class="hint">Drop an image here<br>or click to browse</p>
+      <p class="filename" id="fileName"></p>
+      <input type="file" id="fileInput" accept="image/*" style="display:none">
+    </div>
+
+    <!-- Output settings -->
+    <div class="section">
+      <div class="section-title">Output</div>
+
+      <div class="ctrl">
+        <div class="ctrl-row">
+          <label for="width">Width</label>
+          <span class="val" id="widthVal">80</span>
+        </div>
+        <input type="range" id="width" min="20" max="200" value="80">
+      </div>
+
+      <div class="ctrl">
+        <div class="ctrl-row">
+          <label for="fontSize">Font size</label>
+          <span class="val" id="fontSizeVal">8px</span>
+        </div>
+        <input type="range" id="fontSize" min="5" max="16" value="8">
+      </div>
+    </div>
+
+    <!-- Contrast settings -->
+    <div class="section">
+      <div class="section-title">Contrast</div>
+
+      <div class="ctrl">
+        <div class="ctrl-row">
+          <label for="globalContrast">Global</label>
+          <span class="val" id="globalContrastVal">1.0</span>
+        </div>
+        <input type="range" id="globalContrast" min="10" max="50" value="10">
+      </div>
+
+      <div class="ctrl">
+        <div class="ctrl-row">
+          <label for="edgeContrast">Edge</label>
+          <span class="val" id="edgeContrastVal">1.0</span>
+        </div>
+        <input type="range" id="edgeContrast" min="10" max="50" value="10">
+      </div>
+    </div>
+
+    <!-- Rendering settings -->
+    <div class="section">
+      <div class="section-title">Rendering</div>
+
+      <div class="ctrl">
+        <div class="ctrl-row">
+          <label for="quality">Sample quality</label>
+          <span class="val" id="qualityVal">16</span>
+        </div>
+        <input type="range" id="quality" min="4" max="32" value="16" step="4">
+      </div>
+
+      <div class="ctrl">
+        <label for="charset">Charset</label>
+        <input type="text" id="charset" placeholder="default (printable ASCII)" spellcheck="false">
+      </div>
+
+      <div class="toggle-row">
+        <label>Invert</label>
+        <label class="switch">
+          <input type="checkbox" id="invert">
+          <span class="track"></span>
+          <span class="thumb"></span>
+        </label>
+      </div>
+
+      <div class="toggle-row">
+        <label>Color</label>
+        <label class="switch">
+          <input type="checkbox" id="color">
+          <span class="track"></span>
+          <span class="thumb"></span>
+        </label>
+      </div>
+    </div>
+
+    <button class="render-btn" id="renderBtn" disabled>Render</button>
+  </aside>
+
+  <div class="output-pane">
+    <div class="output-toolbar">
+      <span class="status" id="status">Load an image to begin</span>
+      <span class="meta" id="meta"></span>
+      <button class="copy-btn" id="copyBtn" style="display:none">Copy text</button>
+    </div>
+    <div class="progress-wrap" id="progressWrap" style="display:none">
+      <div class="progress"><div class="progress-bar" id="progressBar"></div></div>
+    </div>
+    <div class="output-scroll">
+      <pre id="art" class="empty">ASCII art appears here</pre>
+    </div>
+  </div>
+</div>
+
+<script>
+'use strict';
+
+// ── Circle definitions (matches Python source) ──────────────────────────────
+
+const INTERNAL_CIRCLES = [
+  {cx: 0.30, cy: 0.20, r: 0.22},
+  {cx: 0.70, cy: 0.15, r: 0.22},
+  {cx: 0.30, cy: 0.50, r: 0.22},
+  {cx: 0.70, cy: 0.50, r: 0.22},
+  {cx: 0.30, cy: 0.80, r: 0.22},
+  {cx: 0.70, cy: 0.85, r: 0.22},
+];
+
+const EXTERNAL_CIRCLES = [
+  {cx:  0.30, cy: -0.15, r: 0.18},
+  {cx:  0.70, cy: -0.15, r: 0.18},
+  {cx: -0.15, cy:  0.25, r: 0.18},
+  {cx: -0.15, cy:  0.75, r: 0.18},
+  {cx:  1.15, cy:  0.25, r: 0.18},
+  {cx:  1.15, cy:  0.75, r: 0.18},
+  {cx:  0.30, cy:  1.15, r: 0.18},
+  {cx:  0.70, cy:  1.15, r: 0.18},
+  {cx: -0.10, cy: -0.10, r: 0.15},
+  {cx:  1.10, cy:  1.10, r: 0.15},
+];
+
+// For each internal circle, the external circle indices that affect it
+const AFFECTING_EXTERNAL = [
+  [0, 1, 2, 8],
+  [0, 1, 4, 8],
+  [2, 3],
+  [4, 5],
+  [3, 6, 7, 9],
+  [5, 6, 7, 9],
+];
+
+const DEFAULT_CHARSET =
+  ' !"#$%&\'()*+,-./0123456789:;<=>?@' +
+  'ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`' +
+  'abcdefghijklmnopqrstuvwxyz{|}~';
+
+// ── Core sampling ────────────────────────────────────────────────────────────
+
+/**
+ * Sample a circle region from a flat RGBA pixel array.
+ * cellX, cellY are cell indices; cellW, cellH are cell dimensions in pixels.
+ * Circle coords are normalized (0-1) relative to the cell.
+ */
+function sampleCircle(data, imgW, imgH, cellX, cellY, cellW, cellH, c, spd) {
+  const cx = (cellX + c.cx) * cellW;
+  const cy = (cellY + c.cy) * cellH;
+  const radius = c.r * Math.min(cellW, cellH);
+  let total = 0, count = 0;
+  for (let i = 0; i < spd; i++) {
+    for (let j = 0; j < spd; j++) {
+      const fx = (i + 0.5) / spd * 2 - 1;
+      const fy = (j + 0.5) / spd * 2 - 1;
+      if (fx * fx + fy * fy > 1) continue;
+      const px = Math.max(0, Math.min(imgW - 1, Math.round(cx + fx * radius)));
+      const py = Math.max(0, Math.min(imgH - 1, Math.round(cy + fy * radius)));
+      const i4 = (py * imgW + px) * 4;
+      // Luminance from linear-ish RGBA (sRGB approximation is fine here)
+      total += 0.2126 * data[i4] / 255 + 0.7152 * data[i4 + 1] / 255 + 0.0722 * data[i4 + 2] / 255;
+      count++;
+    }
+  }
+  return count > 0 ? total / count : 0;
+}
+
+// ── Character lookup table ───────────────────────────────────────────────────
+
+let cachedLookup = null; // { charset, chars, vectors }
+
+function buildLookup(charset) {
+  if (cachedLookup && cachedLookup.charset === charset) return cachedLookup;
+
+  const W = 80, H = 160; // High-res render cell for accuracy
+  const SPD = 6; // samples-per-dim inside circle
+
+  const canvas = document.createElement('canvas');
+  canvas.width = W; canvas.height = H;
+  const ctx = canvas.getContext('2d');
+  ctx.font = `${Math.floor(H * 0.78)}px monospace`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+
+  const chars = [];
+  const rawVectors = [];
+
+  for (const ch of charset) {
+    if ('\t\n\r\x0b\x0c'.includes(ch)) continue;
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = '#fff';
+    ctx.fillText(ch, W / 2, H / 2);
+    const px = ctx.getImageData(0, 0, W, H).data;
+    // Sample at cellX=0, cellY=0, cellW=W, cellH=H
+    const vec = INTERNAL_CIRCLES.map(c => sampleCircle(px, W, H, 0, 0, W, H, c, SPD));
+    chars.push(ch);
+    rawVectors.push(vec);
+  }
+
+  // Normalize: divide each dimension by its max across all characters
+  const maxD = new Float64Array(6);
+  for (const v of rawVectors) for (let d = 0; d < 6; d++) if (v[d] > maxD[d]) maxD[d] = v[d];
+  const vectors = rawVectors.map(v => {
+    const f = new Float32Array(6);
+    for (let d = 0; d < 6; d++) f[d] = v[d] / Math.max(maxD[d], 1e-6);
+    return f;
+  });
+
+  cachedLookup = { charset, chars, vectors };
+  return cachedLookup;
+}
+
+function findBest(sv, vectors) {
+  let best = Infinity, idx = 0;
+  for (let i = 0; i < vectors.length; i++) {
+    const v = vectors[i];
+    let d = 0;
+    for (let k = 0; k < 6; k++) { const diff = sv[k] - v[k]; d += diff * diff; }
+    if (d < best) { best = d; idx = i; }
+  }
+  return idx;
+}
+
+// ── Contrast enhancement ─────────────────────────────────────────────────────
+
+function applyDirectionalContrast(internal, external, exp) {
+  if (exp <= 1) return internal.slice();
+  const out = new Float32Array(6);
+  for (let i = 0; i < 6; i++) {
+    const aff = AFFECTING_EXTERNAL[i];
+    let maxExt = 0;
+    for (const j of aff) if (external[j] > maxExt) maxExt = external[j];
+    const maxVal = Math.max(internal[i], maxExt);
+    if (maxVal < 1e-6) { out[i] = internal[i]; continue; }
+    out[i] = Math.pow(internal[i] / maxVal, exp) * maxVal;
+  }
+  return out;
+}
+
+function applyGlobalContrast(vec, exp) {
+  if (exp <= 1) return vec;
+  let maxVal = 0;
+  for (let k = 0; k < 6; k++) if (vec[k] > maxVal) maxVal = vec[k];
+  if (maxVal < 1e-6) return vec;
+  const out = new Float32Array(6);
+  for (let k = 0; k < 6; k++) out[k] = Math.pow(vec[k] / maxVal, exp) * maxVal;
+  return out;
+}
+
+// ── Cell color sampling ──────────────────────────────────────────────────────
+
+function sampleCellColor(data, imgW, imgH, cellX, cellY, cellW, cellH) {
+  const x0 = Math.max(0, Math.floor(cellX * cellW));
+  const x1 = Math.min(imgW, Math.ceil((cellX + 1) * cellW));
+  const y0 = Math.max(0, Math.floor(cellY * cellH));
+  const y1 = Math.min(imgH, Math.ceil((cellY + 1) * cellH));
+  let r = 0, g = 0, b = 0, n = 0;
+  for (let y = y0; y < y1; y++) {
+    for (let x = x0; x < x1; x++) {
+      const i = (y * imgW + x) * 4;
+      r += data[i]; g += data[i + 1]; b += data[i + 2]; n++;
+    }
+  }
+  return n > 0 ? [r / n | 0, g / n | 0, b / n | 0] : [128, 128, 128];
+}
+
+// ── Main render ──────────────────────────────────────────────────────────────
+
+async function render(imageEl, config) {
+  const {
+    width: numCols, globalContrast, edgeContrast, quality,
+    charset, invert, color,
+    onProgress, onStatus,
+  } = config;
+
+  onStatus('Building character shapes…');
+  await tick();
+
+  const lookup = buildLookup(charset || DEFAULT_CHARSET);
+
+  onStatus('Sampling image…');
+  await tick();
+
+  // Draw image to offscreen canvas
+  const aspect = imageEl.naturalHeight / imageEl.naturalWidth;
+  const cellAspect = 0.5; // character width/height ratio (monospace chars taller)
+  const cellW = imageEl.naturalWidth / numCols;
+  const cellH = cellW / cellAspect;
+  const numRows = Math.max(1, Math.floor(imageEl.naturalHeight / cellH));
+
+  const imgCanvas = document.createElement('canvas');
+  imgCanvas.width = imageEl.naturalWidth;
+  imgCanvas.height = imageEl.naturalHeight;
+  const imgCtx = imgCanvas.getContext('2d');
+  imgCtx.drawImage(imageEl, 0, 0);
+  const imgData = imgCtx.getImageData(0, 0, imgCanvas.width, imgCanvas.height).data;
+  const imgW = imgCanvas.width, imgH = imgCanvas.height;
+
+  const needExternal = edgeContrast > 1.0;
+  const spd = Math.max(2, Math.round(Math.sqrt(quality)));
+
+  const lines = [];
+  const colorLines = []; // only used in color mode
+
+  for (let row = 0; row < numRows; row++) {
+    const rowChars = [];
+    const rowColors = color ? [] : null;
+
+    for (let col = 0; col < numCols; col++) {
+      // Sample internal circles
+      let sv = new Float32Array(6);
+      for (let k = 0; k < 6; k++) {
+        let lum = sampleCircle(imgData, imgW, imgH, col, row, cellW, cellH, INTERNAL_CIRCLES[k], spd);
+        if (invert) lum = 1 - lum;
+        sv[k] = lum;
+      }
+
+      // Sample external circles for edge contrast
+      let ext = null;
+      if (needExternal) {
+        ext = new Float32Array(10);
+        for (let k = 0; k < 10; k++) {
+          let lum = sampleCircle(imgData, imgW, imgH, col, row, cellW, cellH, EXTERNAL_CIRCLES[k], spd);
+          if (invert) lum = 1 - lum;
+          ext[k] = lum;
+        }
+      }
+
+      // Contrast enhancement
+      if (needExternal) sv = applyDirectionalContrast(sv, ext, edgeContrast);
+      sv = applyGlobalContrast(sv, globalContrast);
+
+      // Find best character
+      const idx = findBest(sv, lookup.vectors);
+      rowChars.push(lookup.chars[idx]);
+
+      if (color) rowColors.push(sampleCellColor(imgData, imgW, imgH, col, row, cellW, cellH));
+    }
+
+    lines.push(rowChars.join(''));
+    if (color) colorLines.push(rowColors);
+
+    if (row % 5 === 0) {
+      onProgress((row + 1) / numRows);
+      await tick();
+    }
+  }
+
+  onProgress(1);
+  return { lines, colorLines, numCols, numRows };
+}
+
+function tick() {
+  return new Promise(r => setTimeout(r, 0));
+}
+
+// ── UI wiring ────────────────────────────────────────────────────────────────
+
+let loadedImage = null;
+let plainText = '';
+let rendering = false;
+
+const dropZone   = document.getElementById('dropZone');
+const fileInput  = document.getElementById('fileInput');
+const fileName   = document.getElementById('fileName');
+const renderBtn  = document.getElementById('renderBtn');
+const art        = document.getElementById('art');
+const status     = document.getElementById('status');
+const meta       = document.getElementById('meta');
+const copyBtn    = document.getElementById('copyBtn');
+const progressWrap = document.getElementById('progressWrap');
+const progressBar  = document.getElementById('progressBar');
+
+// Slider display helpers
+function bindSlider(id, valId, fmt) {
+  const sl = document.getElementById(id);
+  const vl = document.getElementById(valId);
+  vl.textContent = fmt(sl.value);
+  sl.addEventListener('input', () => { vl.textContent = fmt(sl.value); });
+}
+bindSlider('width',          'widthVal',         v => v);
+bindSlider('fontSize',       'fontSizeVal',       v => `${v}px`);
+bindSlider('globalContrast', 'globalContrastVal', v => (v / 10).toFixed(1));
+bindSlider('edgeContrast',   'edgeContrastVal',   v => (v / 10).toFixed(1));
+bindSlider('quality',        'qualityVal',        v => v);
+
+// Font size live update
+document.getElementById('fontSize').addEventListener('input', e => {
+  art.style.fontSize = e.target.value + 'px';
+});
+
+// Drop zone
+dropZone.addEventListener('click', () => fileInput.click());
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('over'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('over'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault();
+  dropZone.classList.remove('over');
+  const file = e.dataTransfer.files[0];
+  if (file && file.type.startsWith('image/')) loadFile(file);
+});
+fileInput.addEventListener('change', () => {
+  if (fileInput.files[0]) loadFile(fileInput.files[0]);
+});
+
+function loadFile(file) {
+  const url = URL.createObjectURL(file);
+  const img = new Image();
+  img.onload = () => {
+    loadedImage = img;
+    fileName.textContent = file.name;
+    setStatus(`${img.naturalWidth} × ${img.naturalHeight}px — ready`);
+    renderBtn.disabled = false;
+    cachedLookup = null; // invalidate cache on new image
+  };
+  img.onerror = () => setStatus('Failed to load image', true);
+  img.src = url;
+}
+
+function setStatus(msg, isErr = false) {
+  status.textContent = msg;
+  status.className = 'status' + (isErr ? ' err' : '');
+}
+
+// Copy button
+copyBtn.addEventListener('click', () => {
+  navigator.clipboard.writeText(plainText).then(() => {
+    const orig = copyBtn.textContent;
+    copyBtn.textContent = 'Copied!';
+    setTimeout(() => { copyBtn.textContent = orig; }, 1200);
+  });
+});
+
+// Render button
+renderBtn.addEventListener('click', async () => {
+  if (rendering || !loadedImage) return;
+  rendering = true;
+  renderBtn.disabled = true;
+  copyBtn.style.display = 'none';
+  art.className = '';
+  progressWrap.style.display = 'block';
+  progressBar.style.width = '0%';
+  meta.textContent = '';
+
+  const config = {
+    width:          parseInt(document.getElementById('width').value),
+    globalContrast: parseInt(document.getElementById('globalContrast').value) / 10,
+    edgeContrast:   parseInt(document.getElementById('edgeContrast').value) / 10,
+    quality:        parseInt(document.getElementById('quality').value),
+    charset:        document.getElementById('charset').value.trim() || null,
+    invert:         document.getElementById('invert').checked,
+    color:          document.getElementById('color').checked,
+    onProgress: pct => { progressBar.style.width = (pct * 100).toFixed(1) + '%'; },
+    onStatus: msg => setStatus(msg),
+  };
+
+  const t0 = performance.now();
+
+  try {
+    const { lines, colorLines, numCols, numRows } = await render(loadedImage, config);
+    const elapsed = ((performance.now() - t0) / 1000).toFixed(2);
+
+    plainText = lines.join('\n');
+    meta.textContent = `${numCols}×${numRows}  ${elapsed}s`;
+
+    if (config.color) {
+      // Build HTML with colored spans
+      const html = colorLines.map((row, ri) => {
+        return row.map((c, ci) => {
+          const ch = escHtml(lines[ri][ci]);
+          return `<span style="color:rgb(${c[0]},${c[1]},${c[2]})">${ch}</span>`;
+        }).join('');
+      }).join('\n');
+      art.innerHTML = html;
+    } else {
+      art.textContent = plainText;
+    }
+
+    setStatus(`Done — ${numCols}×${numRows} chars`);
+    copyBtn.style.display = '';
+  } catch (err) {
+    setStatus('Error: ' + err.message, true);
+    console.error(err);
+  }
+
+  progressWrap.style.display = 'none';
+  renderBtn.disabled = false;
+  rendering = false;
+});
+
+function escHtml(ch) {
+  if (ch === '&') return '&amp;';
+  if (ch === '<') return '&lt;';
+  if (ch === '>') return '&gt;';
+  return ch;
+}
+</script>
+</body>
+</html>
