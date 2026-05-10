@@ -275,12 +275,12 @@
             <button class="fit-btn" id="fitBtn">Fit</button>
           </div>
         </div>
-        <input type="range" id="width" min="20" max="200" value="80">
+        <input type="range" id="width" min="20" max="500" value="80">
       </div>
 
       <div class="ctrl">
         <div class="ctrl-row">
-          <label for="fontSize">Font size</label>
+          <label for="fontSize">Display zoom</label>
           <span class="val" id="fontSizeVal">8px</span>
         </div>
         <input type="range" id="fontSize" min="5" max="16" value="8">
@@ -698,11 +698,12 @@ function calcFitWidth() {
   const ctx = document.createElement('canvas').getContext('2d');
   ctx.font = `${fontSize}px ${fontFamily}`;
   const charW = ctx.measureText('M').width;
-  return Math.max(20, Math.min(200, Math.floor(paneW / charW)));
+  return Math.max(20, Math.floor(paneW / charW));
 }
 
 function applyFit() {
   const w = calcFitWidth();
+  if (w > parseInt(widthSlider.max)) widthSlider.max = w;
   widthSlider.value = w;
   document.getElementById('widthVal').textContent = w;
 }
