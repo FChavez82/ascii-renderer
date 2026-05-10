@@ -351,6 +351,7 @@
       <span class="status" id="status">Load an image to begin</span>
       <span class="meta" id="meta"></span>
       <button class="copy-btn" id="copyBtn" style="display:none">Copy text</button>
+      <button class="copy-btn" id="exportBtn" style="display:none">Export PNG</button>
     </div>
     <div class="progress-wrap" id="progressWrap" style="display:none">
       <div class="progress"><div class="progress-bar" id="progressBar"></div></div>
@@ -629,6 +630,7 @@ function tick() {
 let loadedImage = null;
 let plainText = '';
 let rendering = false;
+let lastRender = null; // { lines, colorLines, fontFamily, fontSize }
 
 const dropZone   = document.getElementById('dropZone');
 const fileInput  = document.getElementById('fileInput');
@@ -638,6 +640,7 @@ const art        = document.getElementById('art');
 const status     = document.getElementById('status');
 const meta       = document.getElementById('meta');
 const copyBtn    = document.getElementById('copyBtn');
+const exportBtn  = document.getElementById('exportBtn');
 const progressWrap = document.getElementById('progressWrap');
 const progressBar  = document.getElementById('progressBar');
 
@@ -712,6 +715,7 @@ renderBtn.addEventListener('click', async () => {
   rendering = true;
   renderBtn.disabled = true;
   copyBtn.style.display = 'none';
+  exportBtn.style.display = 'none';
   art.className = '';
   progressWrap.style.display = 'block';
   progressBar.style.width = '0%';
@@ -753,8 +757,15 @@ renderBtn.addEventListener('click', async () => {
     }
 
     art.style.fontFamily = config.fontFamily;
+    lastRender = {
+      lines,
+      colorLines: config.color ? colorLines : null,
+      fontFamily: config.fontFamily,
+      fontSize: parseInt(document.getElementById('fontSize').value),
+    };
     setStatus(`Done — ${numCols}×${numRows} chars`);
     copyBtn.style.display = '';
+    exportBtn.style.display = '';
   } catch (err) {
     setStatus('Error: ' + err.message, true);
     console.error(err);
@@ -771,6 +782,68 @@ function escHtml(ch) {
   if (ch === '>') return '&gt;';
   return ch;
 }
+
+// ── PNG export ───────────────────────────────────────────────────────────────
+
+exportBtn.addEventListener('click', async () => {
+  if (!lastRender) return;
+  exportBtn.textContent = 'Exporting…';
+  exportBtn.disabled = true;
+  await tick();
+
+  const { lines, colorLines, fontFamily } = lastRender;
+  const fontSize = parseInt(document.getElementById('fontSize').value);
+  const pad = Math.round(fontSize * 1.5);
+  const lineHeight = fontSize * 1.18;
+
+  // Measure monospace character advance width
+  const measure = document.createElement('canvas').getContext('2d');
+  measure.font = `${fontSize}px ${fontFamily}`;
+  await document.fonts.load(`${fontSize}px ${fontFamily}`).catch(() => {});
+  const charW = measure.measureText('M').width;
+
+  const numRows = lines.length;
+  const numCols = lines[0]?.length ?? 0;
+
+  const canvas = document.createElement('canvas');
+  canvas.width  = Math.ceil(numCols * charW) + pad * 2;
+  canvas.height = Math.ceil(numRows * lineHeight) + pad * 2;
+
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#161616';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  ctx.font = `${fontSize}px ${fontFamily}`;
+  ctx.textBaseline = 'top';
+
+  if (colorLines) {
+    // Draw each character individually with its sampled color
+    for (let row = 0; row < numRows; row++) {
+      const y = pad + row * lineHeight;
+      for (let col = 0; col < numCols; col++) {
+        const c = colorLines[row][col];
+        ctx.fillStyle = `rgb(${c[0]},${c[1]},${c[2]})`;
+        ctx.fillText(lines[row][col], pad + col * charW, y);
+      }
+    }
+  } else {
+    ctx.fillStyle = '#e2e2e2';
+    for (let row = 0; row < numRows; row++) {
+      ctx.fillText(lines[row], pad, pad + row * lineHeight);
+    }
+  }
+
+  canvas.toBlob(blob => {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'ascii-art.png';
+    a.click();
+    URL.revokeObjectURL(url);
+    exportBtn.textContent = 'Export PNG';
+    exportBtn.disabled = false;
+  }, 'image/png');
+});
 </script>
 </body>
 </html>
