@@ -89,6 +89,7 @@
       accent-color: var(--accent);
       cursor: pointer;
     }
+    input[type=range]:disabled { opacity: 0.35; cursor: not-allowed; }
     input[type=text] {
       width: 100%;
       background: var(--surface2);
@@ -116,6 +117,19 @@
       appearance: auto;
     }
     select:focus { border-color: var(--accent); }
+    .fit-btn {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--muted);
+      border-radius: 3px;
+      padding: 1px 6px;
+      font-size: 10px;
+      cursor: pointer;
+      transition: border-color 0.15s, color 0.15s, background 0.15s;
+      white-space: nowrap;
+    }
+    .fit-btn:hover { border-color: var(--accent); color: var(--text); }
+    .fit-btn.active { border-color: var(--accent); color: var(--accent); background: var(--accent-glow); }
     .toggle-row { display: flex; justify-content: space-between; align-items: center; font-size: 13px; }
     .switch { position: relative; width: 34px; height: 18px; cursor: pointer; }
     .switch input { opacity: 0; width: 0; height: 0; }
@@ -251,7 +265,10 @@
       <div class="ctrl">
         <div class="ctrl-row">
           <label for="width">Width</label>
-          <span class="val" id="widthVal">80</span>
+          <div style="display:flex;align-items:center;gap:6px">
+            <span class="val" id="widthVal">80</span>
+            <button class="fit-btn" id="fitBtn">Fit</button>
+          </div>
         </div>
         <input type="range" id="width" min="20" max="200" value="80">
       </div>
@@ -588,10 +605,46 @@ bindSlider('quality',        'qualityVal',        v => v);
 
 document.getElementById('fontSize').addEventListener('input', e => {
   art.style.fontSize = e.target.value + 'px';
+  if (fitToWindow) applyFit();
 });
 
 document.getElementById('fontFamily').addEventListener('change', e => {
   art.style.fontFamily = e.target.value;
+  if (fitToWindow) applyFit();
+});
+
+// ── Fit to window ─────────────────────────────────────────────────────────────────────────────
+
+let fitToWindow = false;
+const fitBtn = document.getElementById('fitBtn');
+const widthSlider = document.getElementById('width');
+
+function calcFitWidth() {
+  const paneW = document.querySelector('.output-scroll').clientWidth - 32;
+  const fontSize = parseInt(document.getElementById('fontSize').value);
+  const fontFamily = document.getElementById('fontFamily').value;
+  const ctx = document.createElement('canvas').getContext('2d');
+  ctx.font = `${fontSize}px ${fontFamily}`;
+  const charW = ctx.measureText('M').width;
+  return Math.max(20, Math.min(200, Math.floor(paneW / charW)));
+}
+
+function applyFit() {
+  const w = calcFitWidth();
+  widthSlider.value = w;
+  document.getElementById('widthVal').textContent = w;
+}
+
+fitBtn.addEventListener('click', () => {
+  fitToWindow = !fitToWindow;
+  fitBtn.classList.toggle('active', fitToWindow);
+  fitBtn.textContent = fitToWindow ? 'Fitted' : 'Fit';
+  widthSlider.disabled = fitToWindow;
+  if (fitToWindow) applyFit();
+});
+
+window.addEventListener('resize', () => {
+  if (fitToWindow) applyFit();
 });
 
 dropZone.addEventListener('click', () => fileInput.click());
@@ -704,30 +757,24 @@ exportBtn.addEventListener('click', async () => {
   exportBtn.textContent = 'Exporting…';
   exportBtn.disabled = true;
   await tick();
-
   const { lines, colorLines, fontFamily } = lastRender;
   const fontSize = parseInt(document.getElementById('fontSize').value);
   const pad = Math.round(fontSize * 1.5);
   const lineHeight = fontSize * 1.18;
-
   const measure = document.createElement('canvas').getContext('2d');
   measure.font = `${fontSize}px ${fontFamily}`;
   await document.fonts.load(`${fontSize}px ${fontFamily}`).catch(() => {});
   const charW = measure.measureText('M').width;
-
   const numRows = lines.length;
   const numCols = lines[0]?.length ?? 0;
-
   const canvas = document.createElement('canvas');
   canvas.width  = Math.ceil(numCols * charW) + pad * 2;
   canvas.height = Math.ceil(numRows * lineHeight) + pad * 2;
-
   const ctx = canvas.getContext('2d');
   ctx.fillStyle = '#161616';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   ctx.font = `${fontSize}px ${fontFamily}`;
   ctx.textBaseline = 'top';
-
   if (colorLines) {
     for (let row = 0; row < numRows; row++) {
       const y = pad + row * lineHeight;
@@ -743,7 +790,6 @@ exportBtn.addEventListener('click', async () => {
       ctx.fillText(lines[row], pad, pad + row * lineHeight);
     }
   }
-
   canvas.toBlob(blob => {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
