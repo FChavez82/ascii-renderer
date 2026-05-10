@@ -45,6 +45,7 @@
       overflow: hidden;
       height: calc(100vh - 49px);
     }
+    /* ── Sidebar ── */
     .sidebar {
       width: 260px;
       flex-shrink: 0;
@@ -89,7 +90,6 @@
       accent-color: var(--accent);
       cursor: pointer;
     }
-    input[type=range]:disabled { opacity: 0.35; cursor: not-allowed; }
     input[type=text] {
       width: 100%;
       background: var(--surface2);
@@ -164,6 +164,7 @@
     }
     .render-btn:hover:not(:disabled) { opacity: 0.85; }
     .render-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+    /* ── Output ── */
     .output-pane {
       flex: 1;
       display: flex;
@@ -194,8 +195,7 @@
       transition: background 0.15s;
       white-space: nowrap;
     }
-    .copy-btn:hover:not(:disabled) { background: var(--border); }
-    .copy-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .copy-btn:hover { background: var(--border); }
     .output-scroll {
       flex: 1;
       overflow: auto;
@@ -224,7 +224,10 @@
       min-width: unset;
       width: 100%;
     }
-    .progress-wrap { padding: 0 16px; flex-shrink: 0; }
+    .progress-wrap {
+      padding: 0 16px;
+      flex-shrink: 0;
+    }
     .progress {
       height: 2px;
       background: var(--border);
@@ -248,6 +251,7 @@
 </header>
 <div class="layout">
   <aside class="sidebar">
+    <!-- File drop zone -->
     <div class="drop-zone" id="dropZone">
       <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
         <path d="M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/>
@@ -259,6 +263,7 @@
       <input type="file" id="fileInput" accept="image/*" style="display:none">
     </div>
 
+    <!-- Output settings -->
     <div class="section">
       <div class="section-title">Output</div>
 
@@ -270,12 +275,12 @@
             <button class="fit-btn" id="fitBtn">Fit</button>
           </div>
         </div>
-        <input type="range" id="width" min="20" max="200" value="80">
+        <input type="range" id="width" min="20" max="500" value="80">
       </div>
 
       <div class="ctrl">
         <div class="ctrl-row">
-          <label for="fontSize">Font size</label>
+          <label for="fontSize">Display zoom</label>
           <span class="val" id="fontSizeVal">8px</span>
         </div>
         <input type="range" id="fontSize" min="5" max="16" value="8">
@@ -297,6 +302,7 @@
       </div>
     </div>
 
+    <!-- Contrast settings -->
     <div class="section">
       <div class="section-title">Contrast</div>
 
@@ -317,6 +323,7 @@
       </div>
     </div>
 
+    <!-- Rendering settings -->
     <div class="section">
       <div class="section-title">Rendering</div>
 
@@ -374,6 +381,8 @@
 <script>
 'use strict';
 
+// ── Circle definitions (matches Python source) ──────────────────────────────
+
 const INTERNAL_CIRCLES = [
   {cx: 0.30, cy: 0.20, r: 0.22},
   {cx: 0.70, cy: 0.15, r: 0.22},
@@ -396,6 +405,7 @@ const EXTERNAL_CIRCLES = [
   {cx:  1.10, cy:  1.10, r: 0.15},
 ];
 
+// For each internal circle, the external circle indices that affect it
 const AFFECTING_EXTERNAL = [
   [0, 1, 2, 8],
   [0, 1, 4, 8],
@@ -410,6 +420,13 @@ const DEFAULT_CHARSET =
   'ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`' +
   'abcdefghijklmnopqrstuvwxyz{|}~';
 
+// ── Core sampling ────────────────────────────────────────────────────────────
+
+/**
+ * Sample a circle region from a flat RGBA pixel array.
+ * cellX, cellY are cell indices; cellW, cellH are cell dimensions in pixels.
+ * Circle coords are normalized (0-1) relative to the cell.
+ */
 function sampleCircle(data, imgW, imgH, cellX, cellY, cellW, cellH, c, spd) {
   const cx = (cellX + c.cx) * cellW;
   const cy = (cellY + c.cy) * cellH;
@@ -423,6 +440,7 @@ function sampleCircle(data, imgW, imgH, cellX, cellY, cellW, cellH, c, spd) {
       const px = Math.max(0, Math.min(imgW - 1, Math.round(cx + fx * radius)));
       const py = Math.max(0, Math.min(imgH - 1, Math.round(cy + fy * radius)));
       const i4 = (py * imgW + px) * 4;
+      // Luminance from linear-ish RGBA (sRGB approximation is fine here)
       total += 0.2126 * data[i4] / 255 + 0.7152 * data[i4 + 1] / 255 + 0.0722 * data[i4 + 2] / 255;
       count++;
     }
@@ -430,20 +448,26 @@ function sampleCircle(data, imgW, imgH, cellX, cellY, cellW, cellH, c, spd) {
   return count > 0 ? total / count : 0;
 }
 
-let cachedLookup = null;
+// ── Character lookup table ───────────────────────────────────────────────────
+
+let cachedLookup = null; // { charset, fontFamily, chars, vectors }
 
 function buildLookup(charset, fontFamily) {
   if (cachedLookup && cachedLookup.charset === charset && cachedLookup.fontFamily === fontFamily) return cachedLookup;
-  const W = 80, H = 160;
-  const SPD = 6;
+
+  const W = 80, H = 160; // High-res render cell for accuracy
+  const SPD = 6; // samples-per-dim inside circle
+
   const canvas = document.createElement('canvas');
   canvas.width = W; canvas.height = H;
   const ctx = canvas.getContext('2d');
   ctx.font = `${Math.floor(H * 0.78)}px ${fontFamily}`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
+
   const chars = [];
   const rawVectors = [];
+
   for (const ch of charset) {
     if ('\t\n\r\x0b\x0c'.includes(ch)) continue;
     ctx.fillStyle = '#000';
@@ -451,10 +475,13 @@ function buildLookup(charset, fontFamily) {
     ctx.fillStyle = '#fff';
     ctx.fillText(ch, W / 2, H / 2);
     const px = ctx.getImageData(0, 0, W, H).data;
+    // Sample at cellX=0, cellY=0, cellW=W, cellH=H
     const vec = INTERNAL_CIRCLES.map(c => sampleCircle(px, W, H, 0, 0, W, H, c, SPD));
     chars.push(ch);
     rawVectors.push(vec);
   }
+
+  // Normalize: divide each dimension by its max across all characters
   const maxD = new Float64Array(6);
   for (const v of rawVectors) for (let d = 0; d < 6; d++) if (v[d] > maxD[d]) maxD[d] = v[d];
   const vectors = rawVectors.map(v => {
@@ -462,6 +489,7 @@ function buildLookup(charset, fontFamily) {
     for (let d = 0; d < 6; d++) f[d] = v[d] / Math.max(maxD[d], 1e-6);
     return f;
   });
+
   cachedLookup = { charset, fontFamily, chars, vectors };
   return cachedLookup;
 }
@@ -476,6 +504,8 @@ function findBest(sv, vectors) {
   }
   return idx;
 }
+
+// ── Contrast enhancement ─────────────────────────────────────────────────────
 
 function applyDirectionalContrast(internal, external, exp) {
   if (exp <= 1) return internal.slice();
@@ -501,6 +531,8 @@ function applyGlobalContrast(vec, exp) {
   return out;
 }
 
+// ── Cell color sampling ──────────────────────────────────────────────────────
+
 function sampleCellColor(data, imgW, imgH, cellX, cellY, cellW, cellH) {
   const x0 = Math.max(0, Math.floor(cellX * cellW));
   const x1 = Math.min(imgW, Math.ceil((cellX + 1) * cellW));
@@ -516,18 +548,33 @@ function sampleCellColor(data, imgW, imgH, cellX, cellY, cellW, cellH) {
   return n > 0 ? [r / n | 0, g / n | 0, b / n | 0] : [128, 128, 128];
 }
 
+// ── Main render ──────────────────────────────────────────────────────────────
+
 async function render(imageEl, config) {
-  const { width: numCols, globalContrast, edgeContrast, quality, charset, fontFamily, invert, color, onProgress, onStatus } = config;
+  const {
+    width: numCols, globalContrast, edgeContrast, quality,
+    charset, fontFamily, invert, color,
+    onProgress, onStatus,
+  } = config;
+
   onStatus('Building character shapes…');
   await tick();
+
+  // Ensure the chosen web font is loaded before sampling its glyphs
   await document.fonts.load(`${Math.floor(160 * 0.78)}px ${fontFamily}`).catch(() => {});
+
   const lookup = buildLookup(charset || DEFAULT_CHARSET, fontFamily);
+
   onStatus('Sampling image…');
   await tick();
-  const cellAspect = 0.5;
+
+  // Draw image to offscreen canvas
+  const aspect = imageEl.naturalHeight / imageEl.naturalWidth;
+  const cellAspect = 0.5; // character width/height ratio (monospace chars taller)
   const cellW = imageEl.naturalWidth / numCols;
   const cellH = cellW / cellAspect;
   const numRows = Math.max(1, Math.floor(imageEl.naturalHeight / cellH));
+
   const imgCanvas = document.createElement('canvas');
   imgCanvas.width = imageEl.naturalWidth;
   imgCanvas.height = imageEl.naturalHeight;
@@ -535,20 +582,27 @@ async function render(imageEl, config) {
   imgCtx.drawImage(imageEl, 0, 0);
   const imgData = imgCtx.getImageData(0, 0, imgCanvas.width, imgCanvas.height).data;
   const imgW = imgCanvas.width, imgH = imgCanvas.height;
+
   const needExternal = edgeContrast > 1.0;
   const spd = Math.max(2, Math.round(Math.sqrt(quality)));
+
   const lines = [];
-  const colorLines = [];
+  const colorLines = []; // only used in color mode
+
   for (let row = 0; row < numRows; row++) {
     const rowChars = [];
     const rowColors = color ? [] : null;
+
     for (let col = 0; col < numCols; col++) {
+      // Sample internal circles
       let sv = new Float32Array(6);
       for (let k = 0; k < 6; k++) {
         let lum = sampleCircle(imgData, imgW, imgH, col, row, cellW, cellH, INTERNAL_CIRCLES[k], spd);
         if (invert) lum = 1 - lum;
         sv[k] = lum;
       }
+
+      // Sample external circles for edge contrast
       let ext = null;
       if (needExternal) {
         ext = new Float32Array(10);
@@ -558,26 +612,41 @@ async function render(imageEl, config) {
           ext[k] = lum;
         }
       }
+
+      // Contrast enhancement
       if (needExternal) sv = applyDirectionalContrast(sv, ext, edgeContrast);
       sv = applyGlobalContrast(sv, globalContrast);
+
+      // Find best character
       const idx = findBest(sv, lookup.vectors);
       rowChars.push(lookup.chars[idx]);
+
       if (color) rowColors.push(sampleCellColor(imgData, imgW, imgH, col, row, cellW, cellH));
     }
+
     lines.push(rowChars.join(''));
     if (color) colorLines.push(rowColors);
-    if (row % 5 === 0) { onProgress((row + 1) / numRows); await tick(); }
+
+    if (row % 5 === 0) {
+      onProgress((row + 1) / numRows);
+      await tick();
+    }
   }
+
   onProgress(1);
   return { lines, colorLines, numCols, numRows };
 }
 
-function tick() { return new Promise(r => setTimeout(r, 0)); }
+function tick() {
+  return new Promise(r => setTimeout(r, 0));
+}
+
+// ── UI wiring ────────────────────────────────────────────────────────────────
 
 let loadedImage = null;
 let plainText = '';
 let rendering = false;
-let lastRender = null;
+let lastRender = null; // { lines, colorLines, fontFamily, fontSize }
 
 const dropZone   = document.getElementById('dropZone');
 const fileInput  = document.getElementById('fileInput');
@@ -591,6 +660,7 @@ const exportBtn  = document.getElementById('exportBtn');
 const progressWrap = document.getElementById('progressWrap');
 const progressBar  = document.getElementById('progressBar');
 
+// Slider display helpers
 function bindSlider(id, valId, fmt) {
   const sl = document.getElementById(id);
   const vl = document.getElementById(valId);
@@ -603,34 +673,37 @@ bindSlider('globalContrast', 'globalContrastVal', v => (v / 10).toFixed(1));
 bindSlider('edgeContrast',   'edgeContrastVal',   v => (v / 10).toFixed(1));
 bindSlider('quality',        'qualityVal',        v => v);
 
+// Font size live update
 document.getElementById('fontSize').addEventListener('input', e => {
   art.style.fontSize = e.target.value + 'px';
   if (fitToWindow) applyFit();
 });
 
+// Font family live preview (display only — re-render needed for accurate shapes)
 document.getElementById('fontFamily').addEventListener('change', e => {
   art.style.fontFamily = e.target.value;
   if (fitToWindow) applyFit();
 });
 
-// ── Fit to window ─────────────────────────────────────────────────────────────────────────────
+// ── Fit to window ─────────────────────────────────────────────────────────────
 
 let fitToWindow = false;
 const fitBtn = document.getElementById('fitBtn');
 const widthSlider = document.getElementById('width');
 
 function calcFitWidth() {
-  const paneW = document.querySelector('.output-scroll').clientWidth - 32;
+  const paneW = document.querySelector('.output-scroll').clientWidth - 32; // 16px padding each side
   const fontSize = parseInt(document.getElementById('fontSize').value);
   const fontFamily = document.getElementById('fontFamily').value;
   const ctx = document.createElement('canvas').getContext('2d');
   ctx.font = `${fontSize}px ${fontFamily}`;
   const charW = ctx.measureText('M').width;
-  return Math.max(20, Math.min(200, Math.floor(paneW / charW)));
+  return Math.max(20, Math.floor(paneW / charW));
 }
 
 function applyFit() {
   const w = calcFitWidth();
+  if (w > parseInt(widthSlider.max)) widthSlider.max = w;
   widthSlider.value = w;
   document.getElementById('widthVal').textContent = w;
 }
@@ -647,6 +720,7 @@ window.addEventListener('resize', () => {
   if (fitToWindow) applyFit();
 });
 
+// Drop zone
 dropZone.addEventListener('click', () => fileInput.click());
 dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('over'); });
 dropZone.addEventListener('dragleave', () => dropZone.classList.remove('over'));
@@ -668,7 +742,7 @@ function loadFile(file) {
     fileName.textContent = file.name;
     setStatus(`${img.naturalWidth} × ${img.naturalHeight}px — ready`);
     renderBtn.disabled = false;
-    cachedLookup = null;
+    cachedLookup = null; // invalidate cache on new image
   };
   img.onerror = () => setStatus('Failed to load image', true);
   img.src = url;
@@ -679,6 +753,7 @@ function setStatus(msg, isErr = false) {
   status.className = 'status' + (isErr ? ' err' : '');
 }
 
+// Copy button
 copyBtn.addEventListener('click', () => {
   navigator.clipboard.writeText(plainText).then(() => {
     const orig = copyBtn.textContent;
@@ -687,6 +762,7 @@ copyBtn.addEventListener('click', () => {
   });
 });
 
+// Render button
 renderBtn.addEventListener('click', async () => {
   if (rendering || !loadedImage) return;
   rendering = true;
@@ -697,6 +773,7 @@ renderBtn.addEventListener('click', async () => {
   progressWrap.style.display = 'block';
   progressBar.style.width = '0%';
   meta.textContent = '';
+
   const config = {
     width:          parseInt(document.getElementById('width').value),
     globalContrast: parseInt(document.getElementById('globalContrast').value) / 10,
@@ -709,13 +786,18 @@ renderBtn.addEventListener('click', async () => {
     onProgress: pct => { progressBar.style.width = (pct * 100).toFixed(1) + '%'; },
     onStatus: msg => setStatus(msg),
   };
+
   const t0 = performance.now();
+
   try {
     const { lines, colorLines, numCols, numRows } = await render(loadedImage, config);
     const elapsed = ((performance.now() - t0) / 1000).toFixed(2);
+
     plainText = lines.join('\n');
     meta.textContent = `${numCols}×${numRows}  ${elapsed}s`;
+
     if (config.color) {
+      // Build HTML with colored spans
       const html = colorLines.map((row, ri) => {
         return row.map((c, ci) => {
           const ch = escHtml(lines[ri][ci]);
@@ -726,6 +808,7 @@ renderBtn.addEventListener('click', async () => {
     } else {
       art.textContent = plainText;
     }
+
     art.style.fontFamily = config.fontFamily;
     lastRender = {
       lines,
@@ -740,6 +823,7 @@ renderBtn.addEventListener('click', async () => {
     setStatus('Error: ' + err.message, true);
     console.error(err);
   }
+
   progressWrap.style.display = 'none';
   renderBtn.disabled = false;
   rendering = false;
@@ -752,30 +836,41 @@ function escHtml(ch) {
   return ch;
 }
 
+// ── PNG export ───────────────────────────────────────────────────────────────
+
 exportBtn.addEventListener('click', async () => {
   if (!lastRender) return;
   exportBtn.textContent = 'Exporting…';
   exportBtn.disabled = true;
   await tick();
+
   const { lines, colorLines, fontFamily } = lastRender;
   const fontSize = parseInt(document.getElementById('fontSize').value);
   const pad = Math.round(fontSize * 1.5);
   const lineHeight = fontSize * 1.18;
+
+  // Measure monospace character advance width
   const measure = document.createElement('canvas').getContext('2d');
   measure.font = `${fontSize}px ${fontFamily}`;
   await document.fonts.load(`${fontSize}px ${fontFamily}`).catch(() => {});
   const charW = measure.measureText('M').width;
+
   const numRows = lines.length;
   const numCols = lines[0]?.length ?? 0;
+
   const canvas = document.createElement('canvas');
   canvas.width  = Math.ceil(numCols * charW) + pad * 2;
   canvas.height = Math.ceil(numRows * lineHeight) + pad * 2;
+
   const ctx = canvas.getContext('2d');
   ctx.fillStyle = '#161616';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
+
   ctx.font = `${fontSize}px ${fontFamily}`;
   ctx.textBaseline = 'top';
+
   if (colorLines) {
+    // Draw each character individually with its sampled color
     for (let row = 0; row < numRows; row++) {
       const y = pad + row * lineHeight;
       for (let col = 0; col < numCols; col++) {
@@ -790,6 +885,7 @@ exportBtn.addEventListener('click', async () => {
       ctx.fillText(lines[row], pad, pad + row * lineHeight);
     }
   }
+
   canvas.toBlob(blob => {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
