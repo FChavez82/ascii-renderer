@@ -4,6 +4,9 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>ASCII Renderer</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fira+Code&family=IBM+Plex+Mono&family=Inconsolata&family=JetBrains+Mono&family=Roboto+Mono&family=Source+Code+Pro&family=Space+Mono&display=swap" rel="stylesheet">
   <style>
     :root {
       --bg: #0d0d0d;
@@ -42,7 +45,6 @@
       overflow: hidden;
       height: calc(100vh - 49px);
     }
-    /* ── Sidebar ── */
     .sidebar {
       width: 260px;
       flex-shrink: 0;
@@ -100,6 +102,20 @@
       transition: border-color 0.15s;
     }
     input[type=text]:focus { border-color: var(--accent); }
+    select {
+      width: 100%;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 5px 8px;
+      color: var(--text);
+      font-size: 12px;
+      outline: none;
+      cursor: pointer;
+      transition: border-color 0.15s;
+      appearance: auto;
+    }
+    select:focus { border-color: var(--accent); }
     .toggle-row { display: flex; justify-content: space-between; align-items: center; font-size: 13px; }
     .switch { position: relative; width: 34px; height: 18px; cursor: pointer; }
     .switch input { opacity: 0; width: 0; height: 0; }
@@ -134,7 +150,6 @@
     }
     .render-btn:hover:not(:disabled) { opacity: 0.85; }
     .render-btn:disabled { opacity: 0.35; cursor: not-allowed; }
-    /* ── Output ── */
     .output-pane {
       flex: 1;
       display: flex;
@@ -194,10 +209,7 @@
       min-width: unset;
       width: 100%;
     }
-    .progress-wrap {
-      padding: 0 16px;
-      flex-shrink: 0;
-    }
+    .progress-wrap { padding: 0 16px; flex-shrink: 0; }
     .progress {
       height: 2px;
       background: var(--border);
@@ -221,7 +233,6 @@
 </header>
 <div class="layout">
   <aside class="sidebar">
-    <!-- File drop zone -->
     <div class="drop-zone" id="dropZone">
       <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
         <path d="M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/>
@@ -233,7 +244,6 @@
       <input type="file" id="fileInput" accept="image/*" style="display:none">
     </div>
 
-    <!-- Output settings -->
     <div class="section">
       <div class="section-title">Output</div>
 
@@ -252,9 +262,23 @@
         </div>
         <input type="range" id="fontSize" min="5" max="16" value="8">
       </div>
+
+      <div class="ctrl">
+        <label for="fontFamily">Font</label>
+        <select id="fontFamily">
+          <option value="monospace">System monospace</option>
+          <option value="'JetBrains Mono', monospace">JetBrains Mono</option>
+          <option value="'Fira Code', monospace">Fira Code</option>
+          <option value="'Source Code Pro', monospace">Source Code Pro</option>
+          <option value="'IBM Plex Mono', monospace">IBM Plex Mono</option>
+          <option value="'Roboto Mono', monospace">Roboto Mono</option>
+          <option value="'Space Mono', monospace">Space Mono</option>
+          <option value="'Inconsolata', monospace">Inconsolata</option>
+          <option value="'Courier New', monospace">Courier New</option>
+        </select>
+      </div>
     </div>
 
-    <!-- Contrast settings -->
     <div class="section">
       <div class="section-title">Contrast</div>
 
@@ -275,7 +299,6 @@
       </div>
     </div>
 
-    <!-- Rendering settings -->
     <div class="section">
       <div class="section-title">Rendering</div>
 
@@ -390,14 +413,14 @@ function sampleCircle(data, imgW, imgH, cellX, cellY, cellW, cellH, c, spd) {
 
 let cachedLookup = null;
 
-function buildLookup(charset) {
-  if (cachedLookup && cachedLookup.charset === charset) return cachedLookup;
+function buildLookup(charset, fontFamily) {
+  if (cachedLookup && cachedLookup.charset === charset && cachedLookup.fontFamily === fontFamily) return cachedLookup;
   const W = 80, H = 160;
   const SPD = 6;
   const canvas = document.createElement('canvas');
   canvas.width = W; canvas.height = H;
   const ctx = canvas.getContext('2d');
-  ctx.font = `${Math.floor(H * 0.78)}px monospace`;
+  ctx.font = `${Math.floor(H * 0.78)}px ${fontFamily}`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   const chars = [];
@@ -420,7 +443,7 @@ function buildLookup(charset) {
     for (let d = 0; d < 6; d++) f[d] = v[d] / Math.max(maxD[d], 1e-6);
     return f;
   });
-  cachedLookup = { charset, chars, vectors };
+  cachedLookup = { charset, fontFamily, chars, vectors };
   return cachedLookup;
 }
 
@@ -475,10 +498,11 @@ function sampleCellColor(data, imgW, imgH, cellX, cellY, cellW, cellH) {
 }
 
 async function render(imageEl, config) {
-  const { width: numCols, globalContrast, edgeContrast, quality, charset, invert, color, onProgress, onStatus } = config;
+  const { width: numCols, globalContrast, edgeContrast, quality, charset, fontFamily, invert, color, onProgress, onStatus } = config;
   onStatus('Building character shapes…');
   await tick();
-  const lookup = buildLookup(charset || DEFAULT_CHARSET);
+  await document.fonts.load(`${Math.floor(160 * 0.78)}px ${fontFamily}`).catch(() => {});
+  const lookup = buildLookup(charset || DEFAULT_CHARSET, fontFamily);
   onStatus('Sampling image…');
   await tick();
   const cellAspect = 0.5;
@@ -562,6 +586,10 @@ document.getElementById('fontSize').addEventListener('input', e => {
   art.style.fontSize = e.target.value + 'px';
 });
 
+document.getElementById('fontFamily').addEventListener('change', e => {
+  art.style.fontFamily = e.target.value;
+});
+
 dropZone.addEventListener('click', () => fileInput.click());
 dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('over'); });
 dropZone.addEventListener('dragleave', () => dropZone.classList.remove('over'));
@@ -617,6 +645,7 @@ renderBtn.addEventListener('click', async () => {
     edgeContrast:   parseInt(document.getElementById('edgeContrast').value) / 10,
     quality:        parseInt(document.getElementById('quality').value),
     charset:        document.getElementById('charset').value.trim() || null,
+    fontFamily:     document.getElementById('fontFamily').value,
     invert:         document.getElementById('invert').checked,
     color:          document.getElementById('color').checked,
     onProgress: pct => { progressBar.style.width = (pct * 100).toFixed(1) + '%'; },
@@ -639,6 +668,7 @@ renderBtn.addEventListener('click', async () => {
     } else {
       art.textContent = plainText;
     }
+    art.style.fontFamily = config.fontFamily;
     setStatus(`Done — ${numCols}×${numRows} chars`);
     copyBtn.style.display = '';
   } catch (err) {
